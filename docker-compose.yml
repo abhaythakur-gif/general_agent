@@ -1,0 +1,20 @@
+version: "3.9"
+
+services:
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: universal_agent
+    ports:
+      - "8501:8501"
+    env_file:
+      - ../.env
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - agent_data:/app/data
+
+volumes:
+  agent_data:
