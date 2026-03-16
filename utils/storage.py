@@ -4,8 +4,9 @@ import uuid
 from datetime import datetime
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
-AGENTS_FILE = os.path.join(DATA_DIR, "agents.json")
-WORKFLOWS_FILE = os.path.join(DATA_DIR, "workflows.json")
+AGENTS_FILE     = os.path.join(DATA_DIR, "agents.json")
+WORKFLOWS_FILE  = os.path.join(DATA_DIR, "workflows.json")
+EXECUTIONS_FILE = os.path.join(DATA_DIR, "executions.json")
 
 
 def _ensure_data_dir():
@@ -72,3 +73,35 @@ def get_workflow(workflow_id: str) -> dict | None:
 def delete_workflow(workflow_id: str):
     workflows = [w for w in _read(WORKFLOWS_FILE) if w["id"] != workflow_id]
     _write(WORKFLOWS_FILE, workflows)
+
+
+# ─── EXECUTIONS (pause / resume state) ───────────────────────────────────────
+
+def save_execution(execution: dict) -> dict:
+    """Persist a new execution state record to disk."""
+    executions = _read(EXECUTIONS_FILE)
+    executions.append(execution)
+    _write(EXECUTIONS_FILE, executions)
+    return execution
+
+
+def get_execution(execution_id: str) -> dict | None:
+    """Load an execution state record by ID."""
+    return next((e for e in _read(EXECUTIONS_FILE) if e["id"] == execution_id), None)
+
+
+def update_execution(execution_id: str, updates: dict) -> dict | None:
+    """Patch an existing execution state record in place."""
+    executions = _read(EXECUTIONS_FILE)
+    for e in executions:
+        if e["id"] == execution_id:
+            e.update(updates)
+            e["updated_at"] = datetime.utcnow().isoformat()
+            _write(EXECUTIONS_FILE, executions)
+            return e
+    return None
+
+
+def list_executions() -> list:
+    """Return all execution state records."""
+    return _read(EXECUTIONS_FILE)
