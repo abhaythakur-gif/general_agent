@@ -4,12 +4,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import streamlit as st
 import json
 import time as _time
-from utils.storage import list_agents, list_workflows, get_workflow
-from workflow.workflow_runner import start_workflow, resume_workflow
-from backend.schemas.agent_schema import AgentDefinition
+from app.core.storage import list_agents, list_workflows, get_workflow
+from app.engine.workflow.runner import start_workflow, resume_workflow
+from app.schemas.agent import AgentDefinition
 
 st.set_page_config(page_title="Execute Workflow", page_icon="▶️", layout="wide")
+
+# ── Auth guard ────────────────────────────────────────────────────────────────
+if "user_id" not in st.session_state or not st.session_state["user_id"]:
+    st.warning("⚠️ Please go to the Home page and enter your User ID first.")
+    st.stop()
+user_id = st.session_state["user_id"]
+
 st.title("▶️ Execute Workflow")
+st.markdown(f"`👤 {user_id}`")
 
 # ── Session state bootstrap ───────────────────────────────────────────────────
 for _k, _v in {
@@ -27,12 +35,12 @@ for _k, _v in {
         st.session_state[_k] = _v
 
 # ── Workflow selector ─────────────────────────────────────────────────────────
-workflows = list_workflows()
+workflows = list_workflows(user_id)
 if not workflows:
     st.warning("No workflows found. Build a workflow first.")
     st.stop()
 
-agents_all = list_agents()
+agents_all = list_agents(user_id)
 agent_map  = {a["id"]: a for a in agents_all}
 wf_options = {wf["name"]: wf["id"] for wf in workflows}
 
@@ -333,6 +341,7 @@ if st.session_state.wf_status == "idle":
                         workflow_id=selected_wf_id,
                         parallel_groups=par_groups,
                         log_callback=on_log_start,
+                        user_id=user_id,
                     )
                 except Exception as e:
                     st.error(f"❌ Error: {e}")

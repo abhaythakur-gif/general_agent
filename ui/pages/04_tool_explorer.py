@@ -2,7 +2,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
-from tools.tool_registry import list_tools
+from app.tools.registry import list_tools
 
 st.set_page_config(page_title="Tool Explorer", page_icon="🧰", layout="wide")
 st.title("🧰 Tool Explorer")

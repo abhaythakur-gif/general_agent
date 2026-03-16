@@ -2,13 +2,20 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
-from utils.storage import save_agent, list_agents, delete_agent
-from tools.tool_registry import list_tools
-from llm.llm_provider import list_models
+from app.core.storage import save_agent, list_agents, delete_agent
+from app.tools.registry import list_tools
+from app.llm.provider import list_models
 
 st.set_page_config(page_title="Create Agent", page_icon="🔧", layout="wide")
+
+# ── Auth guard ────────────────────────────────────────────────────────────────
+if "user_id" not in st.session_state or not st.session_state["user_id"]:
+    st.warning("⚠️ Please go to the Home page and enter your User ID first.")
+    st.stop()
+user_id = st.session_state["user_id"]
+
 st.title("🔧 Create Agent")
-st.markdown("Define a new AI agent with typed input/output schemas. No code required.")
+st.markdown(f"Define a new AI agent with typed input/output schemas. No code required. &nbsp; `👤 {user_id}`")
 
 all_tools  = list_tools()
 tool_names = [t["name"] for t in all_tools]
@@ -24,10 +31,11 @@ BEHAVIOR_HELP = {
 }
 
 # ── Session state for dynamic schema rows ──────────────────────────────────────
+_EMPTY_FIELD = {"name": "", "type": "str", "description": "", "required": True, "allowed_values": ""}
 if "inp_fields" not in st.session_state:
-    st.session_state.inp_fields = [{"name": "", "type": "str", "description": "", "required": True}]
+    st.session_state.inp_fields = [dict(_EMPTY_FIELD)]
 if "out_fields" not in st.session_state:
-    st.session_state.out_fields = [{"name": "", "type": "str", "description": "", "required": True}]
+    st.session_state.out_fields = [dict(_EMPTY_FIELD)]
 
 
 def _schema_builder(key_prefix: str, fields_key: str, label: str, color: str):
@@ -37,27 +45,55 @@ def _schema_builder(key_prefix: str, fields_key: str, label: str, color: str):
         f'{label}</div>',
         unsafe_allow_html=True,
     )
+    # Column headers
+    h1, h2, h3, h4, h5, h6 = st.columns([3, 2, 3, 3, 1, 1])
+    h1.caption("Field name")
+    h2.caption("Type")
+    h3.caption("Description")
+    h4.caption("Allowed values *(optional)*")
+    h5.caption("Req")
+
     fields = st.session_state[fields_key]
     to_delete = None
 
     for i, field in enumerate(fields):
-        c1, c2, c3, c4, c5 = st.columns([3, 2, 4, 1, 1])
-        field["name"]        = c1.text_input("Name",        value=field["name"],
-                                              key=f"{key_prefix}_name_{i}",
-                                              label_visibility="collapsed",
-                                              placeholder="field_name")
-        field["type"]        = c2.selectbox("Type",         FIELD_TYPES,
-                                             index=FIELD_TYPES.index(field.get("type", "str")),
-                                             key=f"{key_prefix}_type_{i}",
-                                             label_visibility="collapsed")
-        field["description"] = c3.text_input("Description", value=field["description"],
-                                              key=f"{key_prefix}_desc_{i}",
-                                              label_visibility="collapsed",
-                                              placeholder="What this field represents")
-        field["required"]    = c4.checkbox("Req", value=field["required"],
-                                            key=f"{key_prefix}_req_{i}")
+        c1, c2, c3, c4, c5, c6 = st.columns([3, 2, 3, 3, 1, 1])
+        field["name"]           = c1.text_input("Name",
+                                                 value=field["name"],
+                                                 key=f"{key_prefix}_name_{i}",
+                                                 label_visibility="collapsed",
+                                                 placeholder="field_name")
+        field["type"]           = c2.selectbox("Type", FIELD_TYPES,
+                                                index=FIELD_TYPES.index(field.get("type", "str")),
+                                                key=f"{key_prefix}_type_{i}",
+                                                label_visibility="collapsed")
+        field["description"]    = c3.text_input("Description",
+                                                 value=field.get("description", ""),
+                                                 key=f"{key_prefix}_desc_{i}",
+                                                 label_visibility="collapsed",
+                                                 placeholder="What this field represents")
+        # Allowed values — comma-separated, only shown for str/int/bool
+        field_type = field.get("type", "str")
+        av_raw = field.get("allowed_values", "")
+        if isinstance(av_raw, list):
+            av_raw = ", ".join(str(v) for v in av_raw)
+        if field_type in ("str", "int", "bool"):
+            field["allowed_values"] = c4.text_input(
+                "Allowed",
+                value=av_raw,
+                key=f"{key_prefix}_av_{i}",
+                label_visibility="collapsed",
+                placeholder="e.g. positive, negative",
+                help="Comma-separated. LLM is forced to return only one of these values.",
+            )
+        else:
+            c4.caption("—")
+            field["allowed_values"] = ""
+        field["required"]       = c5.checkbox("Req",
+                                               value=field.get("required", True),
+                                               key=f"{key_prefix}_req_{i}")
         if len(fields) > 1:
-            if c5.button("✕", key=f"{key_prefix}_del_{i}"):
+            if c6.button("✕", key=f"{key_prefix}_del_{i}"):
                 to_delete = i
 
     if to_delete is not None:
@@ -65,7 +101,7 @@ def _schema_builder(key_prefix: str, fields_key: str, label: str, color: str):
         st.rerun()
 
     if st.button(f"＋ Add {label.split()[0]} Field", key=f"{key_prefix}_add"):
-        fields.append({"name": "", "type": "str", "description": "", "required": True})
+        fields.append(dict(_EMPTY_FIELD))
         st.rerun()
 
     return fields
@@ -145,12 +181,27 @@ with preview_col:
                 f'<div style="color:#666;font-size:11px;margin-top:2px">{f["description"]}</div>'
                 if f["description"] else ""
             )
+            # Show allowed values pill when set
+            av_raw = f.get("allowed_values", "")
+            if isinstance(av_raw, list):
+                av_list = [str(v) for v in av_raw if str(v).strip()]
+            else:
+                av_list = [v.strip() for v in str(av_raw).split(",") if v.strip()]
+            av_div = (
+                f'<div style="margin-top:3px">'
+                + "".join(
+                    f'<span style="background:#1a3a1a;color:#66BB6A;border-radius:3px;'
+                    f'padding:1px 6px;font-size:10px;margin-right:3px">{v}</span>'
+                    for v in av_list
+                )
+                + f'<span style="color:#555;font-size:10px;margin-left:2px">allowed</span></div>'
+            ) if av_list else ""
             parts.append(
                 f'<div style="background:{bg};border-left:3px solid {fg};border-radius:4px;'
                 f'padding:4px 10px;margin:3px 0;font-size:12px">'
                 f'<span style="color:{fg};font-weight:600">{f["name"] or "?"}</span>'
                 f'<span style="color:#888;margin-left:6px">{f["type"]}</span>'
-                f'{req_span}{desc_div}'
+                f'{req_span}{desc_div}{av_div}'
                 f'</div>'
             )
         return "".join(parts) or '<span style="color:#555;font-size:12px">—</span>'
@@ -210,6 +261,15 @@ if save_clicked:
     elif not valid_out:
         st.error("At least one output field is required.")
     else:
+        def _parse_av(field: dict) -> list | None:
+            """Convert comma-separated allowed_values string → list, or None if blank."""
+            raw = field.get("allowed_values", "")
+            if isinstance(raw, list):
+                cleaned = [str(v).strip().lower() for v in raw if str(v).strip()]
+            else:
+                cleaned = [v.strip().lower() for v in str(raw).split(",") if v.strip()]
+            return cleaned if cleaned else None
+
         agent = {
             "name":         name,
             "description":  description,
@@ -223,20 +283,22 @@ if save_clicked:
             # Rich schemas
             "input_schema":  [
                 {"name": f["name"].strip(), "type": f["type"],
-                 "description": f["description"], "required": f["required"], "default": None}
+                 "description": f["description"], "required": f["required"],
+                 "default": None, "allowed_values": _parse_av(f)}
                 for f in valid_inp
             ],
             "output_schema": [
                 {"name": f["name"].strip(), "type": f["type"],
-                 "description": f["description"], "required": f["required"], "default": None}
+                 "description": f["description"], "required": f["required"],
+                 "default": None, "allowed_values": _parse_av(f)}
                 for f in valid_out
             ],
         }
-        saved = save_agent(agent)
+        saved = save_agent(agent, user_id)
         st.success(f"✅ Agent **{name}** saved!  ID: `{saved['id']}`")
         # Reset schema builders for next agent
-        st.session_state.inp_fields = [{"name": "", "type": "str", "description": "", "required": True}]
-        st.session_state.out_fields = [{"name": "", "type": "str", "description": "", "required": True}]
+        st.session_state.inp_fields = [dict(_EMPTY_FIELD)]
+        st.session_state.out_fields = [dict(_EMPTY_FIELD)]
         st.rerun()
 
 st.divider()
@@ -246,7 +308,7 @@ st.subheader("📋 Existing Agents")
 if st.button("🔄 Refresh"):
     st.rerun()
 
-existing = list_agents()
+existing = list_agents(user_id)
 if not existing:
     st.caption("No agents yet.")
 else:
@@ -290,6 +352,6 @@ else:
                 )
             with right:
                 if st.button("🗑️ Delete", key=f"del_{a['id']}", use_container_width=True):
-                    delete_agent(a["id"])
+                    delete_agent(a["id"], user_id)
                     st.rerun()
 
