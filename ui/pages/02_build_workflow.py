@@ -2,21 +2,46 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
-from utils.storage import list_agents, save_workflow, list_workflows, delete_workflow
-from workflow.workflow_validator import validate_workflow
-from backend.schemas.agent_schema import AgentDefinition
+from app.core.storage import list_agents, save_workflow, update_workflow, list_workflows, delete_workflow
+from app.engine.workflow.validator import validate_workflow
+from app.schemas.agent import AgentDefinition
 
 st.set_page_config(page_title="Build Workflow", page_icon="🔗", layout="wide")
-st.title("🔗 Build Workflow")
-st.markdown("Chain agents into a sequential, conditional, or parallel pipeline.")
 
-agents = list_agents()
+# ── Auth guard ────────────────────────────────────────────────────────────────
+if "user_id" not in st.session_state or not st.session_state["user_id"]:
+    st.warning("⚠️ Please go to the Home page and enter your User ID first.")
+    st.stop()
+user_id = st.session_state["user_id"]
+
+# ── Edit mode session state ───────────────────────────────────────────────────
+if "wf_editing" not in st.session_state:
+    st.session_state["wf_editing"] = None   # None = create mode; dict = edit mode
+
+editing_wf = st.session_state["wf_editing"]
+is_edit_mode = editing_wf is not None
+
+# ── Page header ───────────────────────────────────────────────────────────────
+if is_edit_mode:
+    st.title("✏️ Edit Workflow")
+    st.markdown(
+        f"Updating **{editing_wf['name']}** &nbsp; `👤 {user_id}`"
+    )
+    if st.button("✕ Cancel Edit", type="secondary"):
+        st.session_state["wf_editing"] = None
+        st.rerun()
+else:
+    st.title("🔗 Build Workflow")
+    st.markdown(f"Chain agents into a sequential, conditional, or parallel pipeline. &nbsp; `👤 {user_id}`")
+
+agents = list_agents(user_id)
 if not agents:
     st.warning("No agents found. Create agents first.")
     st.stop()
 
 agent_map     = {a["id"]: a for a in agents}
 agent_options = {a["name"]: a["id"] for a in agents}
+id_to_name    = {v: k for k, v in agent_options.items()}
 
 BEHAVIOR_COLOR = {
     "task_executor":  "#42A5F5",
@@ -24,11 +49,29 @@ BEHAVIOR_COLOR = {
     "aggregator":     "#AB47BC",
 }
 
-# ── Workflow type ──────────────────────────────────────────────────────────────
+# ── Derive defaults from the workflow being edited (or blank for create) ──────
+default_name       = editing_wf.get("name", "")          if is_edit_mode else ""
+default_desc       = editing_wf.get("description", "")   if is_edit_mode else ""
+default_wf_type    = editing_wf.get("workflow_type", "sequential") if is_edit_mode else "sequential"
+default_agent_ids  = editing_wf.get("agent_ids", [])     if is_edit_mode else []
+default_conditions = editing_wf.get("conditions", {})    if is_edit_mode else {}
+default_par_groups = editing_wf.get("parallel_groups", []) if is_edit_mode else []
+
+# Pre-selected agent names in correct order (filter out deleted agents)
+default_selected_names = [
+    id_to_name[aid] for aid in default_agent_ids if aid in id_to_name
+]
+
+# ── Workflow type ─────────────────────────────────────────────────────────────
+wf_type_options = ["Sequential", "Conditional"]
+wf_type_index   = 1 if default_wf_type == "conditional" else 0
+
 workflow_type = st.radio(
     "Workflow type",
-    ["Sequential", "Conditional"],
+    wf_type_options,
+    index=wf_type_index,
     horizontal=True,
+    key="wf_type_radio",
     help=(
         "**Sequential** — all agents always run in order.\n\n"
         "**Conditional** — each agent (except the first) can have a `run_if` expression."
@@ -36,36 +79,44 @@ workflow_type = st.radio(
 )
 is_conditional = workflow_type == "Conditional"
 
-# ── Build form ─────────────────────────────────────────────────────────────────
-with st.form("wf_form"):
-    wf_name = st.text_input("Workflow Name *", placeholder="e.g. Travel Planning Pipeline")
-    wf_desc = st.text_area("Description *", height=60)
+# ── Build / Edit form ─────────────────────────────────────────────────────────
+form_key = "wf_edit_form" if is_edit_mode else "wf_form"
+with st.form(form_key):
+    wf_name = st.text_input(
+        "Workflow Name *",
+        value=default_name,
+        placeholder="e.g. Travel Planning Pipeline",
+    )
+    wf_desc = st.text_area(
+        "Description *",
+        value=default_desc,
+        height=60,
+    )
     selected_names = st.multiselect(
         "Select agents in execution order *",
         list(agent_options.keys()),
+        default=default_selected_names,
     )
-    submitted = st.form_submit_button("💾 Save Workflow", use_container_width=True)
+    btn_label = "💾 Update Workflow" if is_edit_mode else "💾 Save Workflow"
+    submitted = st.form_submit_button(btn_label, use_container_width=True)
 
-# ── Pipeline preview, conditions, parallel groups ──────────────────────────────
-conditions:      dict       = {}   # {agent_id: expression_string}
-parallel_groups: list[list] = []   # [[agent_id, agent_id], ...]
+# ── Pipeline preview, conditions, parallel groups ─────────────────────────────
+conditions:      dict       = {}
+parallel_groups: list[list] = []
 
 if selected_names:
     ordered = [agent_map[agent_options[n]] for n in selected_names]
 
     st.subheader("Pipeline Configuration")
-
-    # Accumulate available variables across the pipeline
-    available_vars: dict = {}   # {var_name: type_str}
+    available_vars: dict = {}
 
     for i, a in enumerate(ordered):
         behavior   = a.get("behavior", "task_executor")
         beh_color  = BEHAVIOR_COLOR.get(behavior, "#888")
         type_badge = f'`{a["agent_type"]}`'
 
-        # Effective output vars from rich schema if available
         if a.get("output_schema"):
-            out_vars = [f["name"] for f in a["output_schema"]]
+            out_vars  = [f["name"] for f in a["output_schema"]]
             out_types = {f["name"]: f["type"] for f in a["output_schema"]}
         else:
             out_vars  = a.get("outputs", [])
@@ -86,16 +137,18 @@ if selected_names:
             unsafe_allow_html=True,
         )
 
-        # Condition input (conditional workflows, not first agent)
         if is_conditional and i > 0:
             hint = (
                 f"Variables available: `{', '.join(sorted(available_vars.keys()))}`"
                 if available_vars else "No variables available yet."
             )
+            # Pre-fill condition from existing workflow when editing
+            existing_cond = default_conditions.get(a["id"], "")
             expr = st.text_input(
                 f"Condition for step {i+1} ({a['name']})",
+                value=existing_cond,
                 key=f"cond_{a['id']}",
-                placeholder="e.g. collection_status == 'complete'",
+                placeholder="e.g. sentiment == 'negative'",
                 help=hint,
             )
             st.caption(f"💡 {hint}")
@@ -104,7 +157,6 @@ if selected_names:
         elif i == 0 and is_conditional:
             st.caption("⚡ Always runs — first agent")
 
-        # Add DC implicit outputs so downstream conditions can use them
         if behavior == "data_collector":
             available_vars["collection_status"]  = "str"
             available_vars["follow_up_question"] = "str"
@@ -117,16 +169,31 @@ if selected_names:
     st.markdown("---")
     st.markdown("#### ⚡ Parallel Groups *(optional)*")
     st.caption(
-        "Select agents that should run **at the same time** (they must not depend on each other's outputs). "
+        "Select agents that should run **at the same time** (must not depend on each other). "
         "Only add a group if 2+ agents can run concurrently."
     )
 
-    n_groups = st.number_input("Number of parallel groups", min_value=0, max_value=5,
-                               value=0, step=1, key="n_par_groups")
+    # Pre-fill number of parallel groups when editing
+    default_n_groups = len(default_par_groups) if is_edit_mode else 0
+    n_groups = st.number_input(
+        "Number of parallel groups",
+        min_value=0, max_value=5,
+        value=default_n_groups,
+        step=1,
+        key="n_par_groups",
+    )
     for g in range(int(n_groups)):
+        # Pre-fill which agents were in each group when editing
+        default_group_names = []
+        if is_edit_mode and g < len(default_par_groups):
+            default_group_names = [
+                id_to_name[aid] for aid in default_par_groups[g]
+                if aid in id_to_name and id_to_name[aid] in selected_names
+            ]
         chosen = st.multiselect(
             f"Parallel group {g+1} — select agents to run simultaneously",
             selected_names,
+            default=default_group_names,
             key=f"par_group_{g}",
         )
         if len(chosen) >= 2:
@@ -138,20 +205,19 @@ if selected_names:
     st.markdown("---")
     st.subheader("Pipeline Diagram")
 
-    # Build a flat -> group membership map
     par_agent_ids: dict = {}
     for grp in parallel_groups:
         fs = frozenset(grp)
         for aid in grp:
             par_agent_ids[aid] = fs
 
-    seen_groups: set = set()
+    seen_groups: set  = set()
     diagram_rows: list = []
 
     for i, a in enumerate(ordered):
         group_key = par_agent_ids.get(a["id"])
         if group_key and group_key in seen_groups:
-            continue   # already rendered this group
+            continue
         if group_key:
             seen_groups.add(group_key)
             group_agents = [ag for ag in ordered if ag["id"] in group_key]
@@ -194,7 +260,7 @@ if selected_names:
         kind = row[0]
         if kind == "sequential":
             rows_html.append(_node_html(row[1], row[2]))
-        else:  # parallel
+        else:
             group_nodes = "".join(
                 f'<div style="display:flex;flex-direction:column;align-items:center;gap:6px">'
                 f'{parallel_badge}'
@@ -209,7 +275,6 @@ if selected_names:
             )
         rows_html.append(arrow)
 
-    # Remove trailing arrow
     if rows_html and rows_html[-1] == arrow:
         rows_html.pop()
 
@@ -228,7 +293,7 @@ if selected_names:
         d["run_if"] = conditions.get(a["id"])
         defs.append(AgentDefinition(**d))
 
-    messages   = validate_workflow(defs)
+    messages    = validate_workflow(defs)
     hard_errors = [m for m in messages if not m.startswith("[WARNING]")]
     warnings    = [m[len("[WARNING] "):] for m in messages if m.startswith("[WARNING]")]
 
@@ -239,7 +304,7 @@ if selected_names:
     for w in warnings:
         st.warning(f"⚠️ {w}")
 
-# ── Handle save ────────────────────────────────────────────────────────────────
+# ── Handle save / update ──────────────────────────────────────────────────────
 if submitted:
     if not wf_name or not selected_names:
         st.error("Name and at least one agent required.")
@@ -252,8 +317,18 @@ if submitted:
             "conditions":      conditions,
             "parallel_groups": parallel_groups,
         }
-        wf = save_workflow(wf_payload)
-        st.success(f"✅ Workflow saved!  ID: `{wf['id']}`")
+
+        if is_edit_mode:
+            updated = update_workflow(editing_wf["id"], wf_payload, user_id)
+            if updated:
+                st.success(f"✅ Workflow **{wf_name}** updated successfully!")
+                st.session_state["wf_editing"] = None   # exit edit mode
+                st.rerun()
+            else:
+                st.error("❌ Update failed — workflow not found.")
+        else:
+            wf = save_workflow(wf_payload, user_id)
+            st.success(f"✅ Workflow saved!  ID: `{wf['id']}`")
 
 # ── Existing workflows list ────────────────────────────────────────────────────
 st.divider()
@@ -261,19 +336,24 @@ st.subheader("📋 Existing Workflows")
 if st.button("🔄 Refresh"):
     st.rerun()
 
-for wf in list_workflows():
-    wf_type_badge  = wf.get("workflow_type", "sequential").upper()
-    badge_icon     = "🔀" if wf_type_badge == "CONDITIONAL" else "➡️"
-    par_groups     = wf.get("parallel_groups", [])
-    par_badge      = f" ⚡ {len(par_groups)} parallel group(s)" if par_groups else ""
-    with st.expander(f"{badge_icon} {wf['name']}  [{wf_type_badge}]{par_badge}"):
+for wf in list_workflows(user_id):
+    wf_type_badge = wf.get("workflow_type", "sequential").upper()
+    badge_icon    = "🔀" if wf_type_badge == "CONDITIONAL" else "➡️"
+    par_groups    = wf.get("parallel_groups", [])
+    par_badge     = f" ⚡ {len(par_groups)} parallel group(s)" if par_groups else ""
+    is_being_edited = is_edit_mode and editing_wf.get("id") == wf.get("id")
+
+    with st.expander(
+        f"{badge_icon} {wf['name']}  [{wf_type_badge}]{par_badge}"
+        + (" ✏️ *editing*" if is_being_edited else "")
+    ):
         wf_conditions = wf.get("conditions", {})
         for i, aid in enumerate(wf.get("agent_ids", [])):
-            a         = agent_map.get(aid, {})
-            aname     = a.get("name", aid)
-            behavior  = a.get("behavior", "task_executor")
-            bc        = BEHAVIOR_COLOR.get(behavior, "#888")
-            cond_str  = wf_conditions.get(aid, "")
+            a          = agent_map.get(aid, {})
+            aname      = a.get("name", aid)
+            behavior   = a.get("behavior", "task_executor")
+            bc         = BEHAVIOR_COLOR.get(behavior, "#888")
+            cond_str   = wf_conditions.get(aid, "")
             cond_label = f"  *(if `{cond_str}`)*" if cond_str else "  *(always runs)*"
             st.markdown(
                 f"  Step {i+1}: **{aname}**"
@@ -286,7 +366,18 @@ for wf in list_workflows():
             for gi, grp in enumerate(par_groups):
                 names = [agent_map.get(aid, {}).get("name", aid) for aid in grp]
                 st.caption(f"⚡ Parallel group {gi+1}: {' & '.join(names)}")
-        if st.button("🗑️ Delete Workflow", key=f"delwf_{wf['id']}"):
-            delete_workflow(wf["id"])
-            st.rerun()
+
+        col_edit, col_del = st.columns(2)
+        with col_edit:
+            if st.button("✏️ Edit", key=f"editwf_{wf['id']}", use_container_width=True):
+                st.session_state["wf_editing"] = wf
+                st.rerun()
+        with col_del:
+            if st.button("🗑️ Delete", key=f"delwf_{wf['id']}", use_container_width=True):
+                # If we're editing this workflow, cancel edit mode first
+                if is_edit_mode and editing_wf.get("id") == wf.get("id"):
+                    st.session_state["wf_editing"] = None
+                delete_workflow(wf["id"], user_id)
+                st.rerun()
+
 

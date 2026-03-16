@@ -2,6 +2,42 @@ version: "3.9"
 
 services:
 
+  mongo:
+    image: mongo:7.0
+    container_name: universal_agent_mongo
+    ports:
+      - "27030:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: universal_agent_api
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      - PYTHONPATH=/app
+      - MONGODB_URL=mongodb://mongo:27017
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
   app:
     build:
       context: .
@@ -13,8 +49,17 @@ services:
       - ../.env
     environment:
       - PYTHONPATH=/app
+      - MONGODB_URL=mongodb://mongo:27017
+      - API_URL=http://api:8000
     volumes:
       - agent_data:/app/data
+    depends_on:
+      mongo:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   agent_data:
+  mongo_data:
