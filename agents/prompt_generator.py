@@ -1,39 +1,114 @@
 from tools.tool_registry import tool_metadata
 
 
-def generate_prompt(agent_def) -> str:
-    """
-    Auto-generate a system prompt from an agent definition.
-    Users only provide a description - this function builds the full prompt.
-    """
+# ─── Type-label helpers ───────────────────────────────────────────────────────
+
+def _field_label(f) -> str:
+    """Return a human-readable label for a FieldSchema."""
+    req = "REQUIRED" if f.required else "optional"
+    desc = f" — {f.description}" if f.description else ""
+    return f"  • {f.name} ({f.type}, {req}){desc}"
+
+
+# ─── Prompt generators per behavior ──────────────────────────────────────────
+
+def _prompt_task_executor(agent_def) -> str:
+    """Standard task-executor / aggregator prompt."""
     tool_lines = []
     for tool_name in agent_def.tools:
         meta = tool_metadata.get(tool_name, {})
         desc = meta.get("description", "No description available.")
         inputs_list = ", ".join(meta.get("inputs", []))
-        tool_lines.append(f"  - {tool_name}({inputs_list}): {desc}")
-
+        tool_lines.append(f"  • {tool_name}({inputs_list}): {desc}")
     tools_section = "\n".join(tool_lines) if tool_lines else "  None"
-    inputs_section = ", ".join(agent_def.inputs) if agent_def.inputs else "None"
-    outputs_section = "\n".join([f"  - {o}" for o in agent_def.outputs]) if agent_def.outputs else "  None"
 
-    prompt = f"""You are an AI agent with the following role:
+    # Input fields — use rich schema if available, fall back to flat names
+    if agent_def.input_schema:
+        inp_section = "\n".join(_field_label(f) for f in agent_def.input_schema)
+    else:
+        inp_section = "  " + ", ".join(agent_def.inputs) if agent_def.inputs else "  None"
+
+    # Output fields
+    if agent_def.output_schema:
+        out_section = "\n".join(_field_label(f) for f in agent_def.output_schema)
+    else:
+        out_section = "\n".join(f"  • {o}" for o in agent_def.outputs) if agent_def.outputs else "  None"
+
+    behavior_note = (
+        "\nYou are aggregating results from multiple upstream agents. "
+        "Combine all inputs into a coherent, complete output.\n"
+    ) if getattr(agent_def, "behavior", "task_executor") == "aggregator" else ""
+
+    return f"""You are an AI agent with the following role:
 {agent_def.description}
+{behavior_note}
+INPUT VARIABLES (available in workflow state):
+{inp_section}
 
-You will receive the following input variables from the workflow state:
-{inputs_section}
-
-You have access to the following tools:
+AVAILABLE TOOLS:
 {tools_section}
 
-Your task:
-Use your reasoning and the available tools to accomplish your role.
-Produce the following output variables:
-{outputs_section}
+OUTPUT VARIABLES you must produce:
+{out_section}
 
-Important:
-- Only use the tools listed above. Do not attempt to use any other tools.
-- Structure your final response so each output variable is clearly present.
+Instructions:
+- Use the tools listed above — do not invent or call any other tool.
+- Structure your final answer so every output variable is clearly present with its exact name.
 - Be thorough, accurate, and concise.
+""".strip()
+
+
+def _prompt_data_collector(agent_def, already_collected: dict | None = None) -> str:
+    """
+    Data-collector prompt.  Instructs the LLM to extract structured fields
+    from a user message and flag which required fields are still missing.
+    `already_collected` is a dict of fields extracted in previous turns.
+    """
+    if agent_def.output_schema:
+        field_lines = "\n".join(_field_label(f) for f in agent_def.output_schema)
+    else:
+        field_lines = "\n".join(f"  • {o} (str, REQUIRED)" for o in agent_def.outputs)
+
+    collected_section = ""
+    if already_collected:
+        collected_lines = "\n".join(
+            f"  • {k}: {v}" for k, v in already_collected.items() if v is not None
+        )
+        collected_section = f"""
+ALREADY COLLECTED (from previous messages):
+{collected_lines}
 """
-    return prompt.strip()
+
+    return f"""You are a data-collection agent. Your job is to extract structured information
+from the user's message and determine whether all required fields have been provided.
+
+AGENT ROLE: {agent_def.description}
+
+FIELDS TO COLLECT:
+{field_lines}
+{collected_section}
+INSTRUCTIONS:
+1. Extract every field you can from the user's current message AND the already-collected data above.
+2. Set `collection_status` to "complete" if ALL REQUIRED fields now have values, otherwise "incomplete".
+3. If "incomplete", set `follow_up_question` to a single, friendly, conversational question
+   asking ONLY for the missing REQUIRED fields.  Do not ask for optional fields unless all
+   required ones are filled.
+4. List any still-missing REQUIRED field names in `missing_fields`.
+5. Return your response as valid JSON matching the output schema exactly.
+   Use null for optional fields that were not provided.
+""".strip()
+
+
+# ─── Public entry point ───────────────────────────────────────────────────────
+
+def generate_prompt(agent_def, already_collected: dict | None = None) -> str:
+    """
+    Auto-generate a system prompt from an agent definition.
+    Dispatches to the appropriate template based on agent behavior.
+    """
+    behavior = getattr(agent_def, "behavior", "task_executor")
+    if behavior == "data_collector":
+        return _prompt_data_collector(agent_def, already_collected)
+    return _prompt_task_executor(agent_def)
+
+

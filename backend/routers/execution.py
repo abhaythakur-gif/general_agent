@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from database.db import get_db
 from database.crud import (
@@ -7,7 +8,7 @@ from database.crud import (
 )
 from backend.schemas.workflow_schema import ExecutionRequest
 from backend.schemas.agent_schema import AgentDefinition
-from workflow.workflow_runner import run_workflow
+from workflow.workflow_runner import start_workflow, resume_workflow
 import threading
 
 router = APIRouter(tags=["Execution"])
@@ -41,16 +42,21 @@ def execute_workflow(
                 name=agent_row.name,
                 description=agent_row.description,
                 agent_type=agent_row.agent_type,
+                behavior=getattr(agent_row, "behavior", "task_executor") or "task_executor",
                 llm_model=agent_row.llm_model,
                 tools=agent_row.tools or [],
                 inputs=agent_row.inputs or [],
                 outputs=agent_row.outputs or [],
+                input_schema=getattr(agent_row, "input_schema", []) or [],
+                output_schema=getattr(agent_row, "output_schema", []) or [],
             )
         )
 
+    parallel_groups = getattr(wf, "parallel_groups", []) or []
+
     # Create execution log entry
     exec_log = create_execution_log(db, workflow_id)
-    exec_id = exec_log.id
+    exec_id  = exec_log.id
     _active_logs[exec_id] = []
 
     def log_callback(entry: dict):
@@ -59,23 +65,62 @@ def execute_workflow(
 
     # Run workflow synchronously (blocking)
     try:
-        final_state = run_workflow(
+        result = start_workflow(
             agent_defs=agent_defs,
             initial_inputs=request.initial_inputs,
+            workflow_id=workflow_id,
+            parallel_groups=parallel_groups,
             log_callback=log_callback,
         )
-        complete_execution(db, exec_id, final_state)
+        if result["status"] == "completed":
+            complete_execution(db, exec_id, result["state"])
         return {
-            "execution_id": exec_id,
-            "status": "completed",
-            "final_output": final_state,
-            "logs": _active_logs.get(exec_id, []),
+            "execution_id":       result["execution_id"],
+            "status":             result["status"],
+            "final_output":       result["state"],
+            "follow_up_question": result.get("follow_up_question"),
+            "paused_at_agent":    result.get("paused_at_agent"),
+            "missing_fields":     result.get("missing_fields", []),
+            "logs":               _active_logs.get(exec_id, []),
         }
     except Exception as e:
         fail_execution(db, exec_id, str(e))
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         _active_logs.pop(exec_id, None)
+
+
+class ResumeRequest(BaseModel):
+    user_input: str
+
+
+@router.post("/executions/{execution_id}/resume")
+def resume_execution(execution_id: str, request: ResumeRequest):
+    """Resume a paused workflow execution with new user input."""
+    collected: list = []
+
+    def log_callback(entry: dict):
+        collected.append(entry)
+
+    try:
+        result = resume_workflow(
+            execution_id=execution_id,
+            user_input=request.user_input,
+            log_callback=log_callback,
+        )
+        return {
+            "execution_id":       result["execution_id"],
+            "status":             result["status"],
+            "final_output":       result["state"],
+            "follow_up_question": result.get("follow_up_question"),
+            "paused_at_agent":    result.get("paused_at_agent"),
+            "missing_fields":     result.get("missing_fields", []),
+            "logs":               collected,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/executions/{execution_id}/logs")

@@ -1,3 +1,8 @@
+from tools.travel_tools import (
+    search_flights,
+    search_hotels,
+    search_tourist_places,
+)
 from tools.weather_tools import (
     get_current_weather,
     get_weather_forecast,
@@ -37,6 +42,10 @@ tool_registry: dict = {
     "scholar_search": scholar_search,
     "stock_search": stock_search,
     "autocomplete_search": autocomplete_search,
+    # Travel
+    "search_flights":        search_flights,
+    "search_hotels":         search_hotels,
+    "search_tourist_places": search_tourist_places,
 }
 
 # Metadata for UI display and prompt generation
@@ -152,6 +161,27 @@ tool_metadata: dict = {
         "inputs": ["query"],
         "category": "Search",
         "api_source": "SerpAPI (Google Autocomplete)",
+    },
+    "search_flights": {
+        "name": "search_flights",
+        "description": "Search Google Flights for one-way flights between Indian cities. Accepts city names (e.g. Mumbai, Delhi, Bangalore, Hyderabad, Chennai, Kolkata, Pune, Goa, Jaipur, Kochi) or IATA codes. Date accepts any format: '15 April 2026', '15/04/2026', '2026-04-15'.",
+        "inputs": ["origin (city name or IATA, e.g. Mumbai)", "destination (city name or IATA, e.g. Delhi)", "date (any format, e.g. 15 April 2026)", "adults (default 1, optional)", "currency (default INR, optional)"],
+        "category": "Travel",
+        "api_source": "SerpAPI (Google Flights)",
+    },
+    "search_hotels": {
+        "name": "search_hotels",
+        "description": "Search Google Hotels for available hotels in any Indian city. Just provide the destination city name (e.g. Mumbai, Goa, Jaipur, Udaipur). Check-in and check-out dates are handled automatically.",
+        "inputs": ["destination (city name, e.g. Goa)", "currency (default INR, optional)"],
+        "category": "Travel",
+        "api_source": "SerpAPI (Google Hotels)",
+    },
+    "search_tourist_places": {
+        "name": "search_tourist_places",
+        "description": "Find top tourist attractions and places to visit in any Indian city. Just provide the destination city name (e.g. Jaipur, Goa, Agra, Varanasi). Returns attraction name, address, rating, opening hours and website.",
+        "inputs": ["destination (city name, e.g. Jaipur)"],
+        "category": "Travel",
+        "api_source": "SerpAPI (Google Maps)",
     },
 }
 
