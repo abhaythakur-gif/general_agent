@@ -97,8 +97,27 @@ def _run_data_collector(agent_def, input_values: dict, workflow_state: dict, llm
     if not output_schema:
         raise ValueError(f"data_collector agent '{agent_def.name}' must have an output_schema defined.")
 
-    already_collected = {f.name: workflow_state.get(f.name) for f in output_schema if workflow_state.get(f.name) is not None}
-    system_prompt = _prompt_data_collector(agent_def, already_collected or None)
+    # ── Short-circuit: if all required output fields are already in workflow
+    #    state (pre-filled by the Smart Router), skip the LLM call entirely.
+    required_names = [f.name for f in output_schema if f.required]
+    already_in_state = {
+        f.name: workflow_state.get(f.name)
+        for f in output_schema
+        if workflow_state.get(f.name) is not None
+    }
+    truly_missing_upfront = [n for n in required_names if already_in_state.get(n) is None]
+
+    if not truly_missing_upfront:
+        # All required fields already present — return complete immediately, no LLM needed.
+        result = {f.name: already_in_state.get(f.name) for f in output_schema}
+        result["collection_status"]  = "complete"
+        result["follow_up_question"] = None
+        result["missing_fields"]     = []
+        return result
+
+    # ── Normal path: invoke LLM to extract/collect missing fields ────────────
+    already_collected = already_in_state or None
+    system_prompt = _prompt_data_collector(agent_def, already_collected)
     output_model  = _build_data_collector_model(output_schema)
     structured_llm = llm.with_structured_output(output_model)
 
@@ -112,7 +131,6 @@ def _run_data_collector(agent_def, input_values: dict, workflow_state: dict, llm
     result_dict = result.model_dump()
     result_dict = _coerce_to_schema(result_dict, output_schema)
 
-    required_names = [f.name for f in output_schema if f.required]
     truly_missing  = [n for n in required_names if result_dict.get(n) is None]
 
     if truly_missing:
