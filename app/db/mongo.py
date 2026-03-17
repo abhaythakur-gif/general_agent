@@ -37,6 +37,7 @@ def ensure_indexes() -> None:
     db["execution_logs"].create_index([("user_id", ASCENDING)], name="exec_user_id")
     db["execution_logs"].create_index([("workflow_id", ASCENDING)], name="exec_workflow_id")
     db["execution_logs"].create_index([("status", ASCENDING)], name="exec_status")
+    db["tools"].create_index([("category", ASCENDING)], name="tools_category")
 
 
 def get_or_create_user(user_id: str) -> dict:

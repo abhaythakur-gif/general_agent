@@ -145,3 +145,37 @@ class ExecutionRepository:
 
     def list_by_workflow(self, workflow_id: str) -> list:
         return [_strip_mongo(d) for d in self._col.find({"workflow_id": workflow_id})]
+
+
+# ─── Tool Repository ──────────────────────────────────────────────────────────
+
+class ToolRepository:
+    """
+    Stores tool metadata in the 'tools' collection.
+    Tools are global (not user-scoped); _id is the tool name.
+    """
+
+    def __init__(self):
+        self._col = get_mongo_db()["tools"]
+
+    def seed(self, tools: list) -> None:
+        """Upsert every tool by name. Safe to call on every startup."""
+        for t in tools:
+            doc = dict(t)
+            doc["_id"] = doc["name"]          # tool name is the primary key
+            self._col.update_one(
+                {"_id": doc["_id"]},
+                {"$set": doc},
+                upsert=True,
+            )
+
+    def list_all(self) -> list:
+        """Return all tools sorted by category."""
+        return [
+            _strip_mongo(d)
+            for d in self._col.find({}).sort("category", 1)
+        ]
+
+    def get(self, name: str) -> Optional[dict]:
+        doc = self._col.find_one({"_id": name})
+        return _strip_mongo(doc) if doc else None
