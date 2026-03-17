@@ -39,6 +39,24 @@ def ensure_indexes() -> None:
     db["execution_logs"].create_index([("status", ASCENDING)], name="exec_status")
     db["tools"].create_index([("category", ASCENDING)], name="tools_category")
 
+    # ── Chat memory indexes ──────────────────────────────────────────────────
+    db["chat_sessions"].create_index(
+        [("user_id", ASCENDING), ("tenant_id", ASCENDING)],
+        name="chat_sessions_user_tenant",
+    )
+    db["chat_sessions"].create_index(
+        [("user_id", ASCENDING), ("last_message_at", ASCENDING)],
+        name="chat_sessions_user_last_msg",
+    )
+    db["chat_messages"].create_index(
+        [("session_id", ASCENDING), ("timestamp", ASCENDING)],
+        name="chat_messages_session_ts",
+    )
+    db["chat_messages"].create_index(
+        [("user_id", ASCENDING)],
+        name="chat_messages_user_id",
+    )
+
 
 def get_or_create_user(user_id: str) -> dict:
     """
