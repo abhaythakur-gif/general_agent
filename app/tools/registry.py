@@ -75,7 +75,27 @@ def get_tool(name: str):
     return tool_registry[name]
 
 
+def seed_tools_to_db() -> None:
+    """
+    Upsert all tool metadata from this module into MongoDB.
+    Safe to call on every startup — uses upsert so nothing is duplicated.
+    """
+    from app.core.storage import seed_tools
+    seed_tools(list(tool_metadata.values()))
+
+
 def list_tools() -> list:
+    """
+    Return tool metadata from MongoDB.
+    Falls back to the hardcoded dict if MongoDB is unavailable.
+    """
+    try:
+        from app.core.storage import list_tools as _db_list
+        result = _db_list()
+        if result:
+            return result
+    except Exception:
+        pass
     return list(tool_metadata.values())
 
 

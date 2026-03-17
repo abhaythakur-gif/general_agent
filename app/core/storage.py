@@ -6,11 +6,12 @@ All functions accept an optional `user_id` parameter.
 """
 
 from typing import Optional
-from app.repositories.repositories import AgentRepository, WorkflowRepository, ExecutionRepository
+from app.repositories.repositories import AgentRepository, WorkflowRepository, ExecutionRepository, ToolRepository
 
 _agents     = AgentRepository()
 _workflows  = WorkflowRepository()
 _executions = ExecutionRepository()
+_tools      = ToolRepository()
 
 _ANON = "__anonymous__"
 
@@ -73,3 +74,20 @@ def update_execution(execution_id: str, updates: dict) -> dict | None:
 
 def list_executions(user_id: str = _ANON) -> list:
     return _executions.list_by_user(user_id)
+
+
+# ─── TOOLS ───────────────────────────────────────────────────────────────────
+
+def seed_tools(tools: list) -> None:
+    """Upsert all tool metadata into the 'tools' collection."""
+    _tools.seed(tools)
+
+
+def list_tools() -> list:
+    """Return all tool metadata from MongoDB, sorted by category."""
+    return _tools.list_all()
+
+
+def get_tool_meta(name: str) -> Optional[dict]:
+    """Return metadata for a single tool by name."""
+    return _tools.get(name)

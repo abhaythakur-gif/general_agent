@@ -8,6 +8,8 @@ from app.api.v1 import auth, agents, workflows, execution, tools
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_indexes()
+    from app.tools.registry import seed_tools_to_db
+    seed_tools_to_db()
     yield
 
 

@@ -7,9 +7,11 @@ from app.db.mongo import get_or_create_user, ensure_indexes
 
 st.set_page_config(page_title="Universal Agent Builder", page_icon="🤖", layout="wide")
 
-# ── Ensure MongoDB indexes exist (runs once per process startup) ──────────────
+# ── Ensure MongoDB indexes + seed tools (runs once per process startup) ─────
 try:
     ensure_indexes()
+    from app.tools.registry import seed_tools_to_db
+    seed_tools_to_db()
 except Exception as _mongo_err:
     import os as _os
     _mongo_url = _os.getenv("MONGODB_URL", "mongodb://localhost:27030")

@@ -44,6 +44,13 @@ agents_all = list_agents(user_id)
 agent_map  = {a["id"]: a for a in agents_all}
 wf_options = {wf["name"]: wf["id"] for wf in workflows}
 
+# ── Honor pre-selection coming from the Smart Router page ────────────────────
+_pre_id = st.session_state.pop("pre_selected_workflow_id", None)
+if _pre_id:
+    _pre_name = next((wf["name"] for wf in workflows if wf["id"] == _pre_id), None)
+    if _pre_name:
+        st.session_state["wf_selector"] = _pre_name
+
 selected_wf_name = st.selectbox("Select Workflow", list(wf_options.keys()),
                                  key="wf_selector")
 selected_wf_id   = wf_options[selected_wf_name]
@@ -296,6 +303,235 @@ def _render_log(logs: list) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Live execution display helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Only events in this dict are shown in the live activity feed.
+# Keeping it small means users see exactly what matters, not engine internals.
+_EVENT_META = {
+    "workflow_start":       ("🚀", "#0d2a1a"),
+    "workflow_resume":      ("↩️",  "#0d1a2e"),
+    "agent_sequence":       ("🤖", "#0d1a2e"),
+    "tool_call":            ("🔧", "#2e1a0d"),
+    "agent_complete":       ("✅", "#0d2e0d"),
+    "agent_skipped":        ("⏭",  "#2e1a00"),
+    "parallel_group_start": ("⚡", "#0d1a2e"),
+    "workflow_complete":    ("🎉", "#0d2e0d"),
+    "workflow_error":       ("❌", "#2e0000"),
+    "workflow_paused":      ("⏸️",  "#1a1500"),
+}
+
+
+# Friendly tool-name labels shown to the user instead of raw internal names
+_TOOL_LABELS: dict = {
+    "web_search":         "Searching the web",
+    "search_web":         "Searching the web",
+    "weather":            "Fetching weather data",
+    "get_weather":        "Fetching weather data",
+    "travel":             "Looking up travel info",
+    "get_flights":        "Looking up flights",
+    "get_hotels":         "Looking up hotels",
+    "calculator":         "Running a calculation",
+    "code_interpreter":   "Running code",
+    "file_read":          "Reading a file",
+    "file_write":         "Writing to a file",
+    "send_email":         "Sending an email",
+    "database_query":     "Querying the database",
+    "api_call":           "Calling an external API",
+}
+
+
+def _action_label(entry: dict) -> str:
+    """Return a clean, user-friendly description for the activity feed.
+    Only events present in _EVENT_META are shown — everything else is ignored."""
+    event = entry.get("event", "")
+    if event == "workflow_start":
+        n = entry.get('num_agents', '?')
+        return f"Workflow started with {n} agent{'s' if n != 1 else ''}"
+    if event == "workflow_resume":
+        return "Workflow resumed"
+    if event == "agent_sequence":
+        name = entry.get('agent', 'Agent')
+        step, total = entry.get('step', 0), entry.get('total', 0)
+        return f"**{name}** is working  ·  step {step} of {total}"
+    if event == "tool_call":
+        raw  = entry.get('tool', '')
+        label = _TOOL_LABELS.get(raw, raw.replace('_', ' ').title())
+        return f"{label}…"
+    if event == "agent_complete":
+        name = entry.get('agent', 'Agent')
+        dur  = entry.get('duration_ms')
+        suffix = f" · {dur/1000:.1f}s" if dur else ""
+        return f"**{name}** finished{suffix}"
+    if event == "agent_skipped":
+        return f"**{entry.get('agent', 'Agent')}** was skipped"
+    if event == "parallel_group_start":
+        agents = entry.get('agents', [])
+        return f"Running {', '.join(f'**{a}**' for a in agents)} in parallel"
+    if event == "workflow_complete":
+        return "Workflow completed successfully"
+    if event == "workflow_error":
+        return f"Something went wrong — {str(entry.get('error', ''))[:100]}"
+    if event == "workflow_paused":
+        return f"Paused — waiting for your input"
+    return ""  # Return empty string for any event not whitelisted above
+
+
+def _render_agent_card(placeholder, state: dict):
+    """Render the big 'currently running agent' card into an st.empty()."""
+    name   = state.get("name", "")
+    status = state.get("status", "running")
+    action = state.get("action", "Working…")
+    step   = state.get("step", 0)
+    total  = state.get("total", 0)
+
+    if not name:
+        placeholder.empty()
+        return
+
+    if status == "done":
+        color, anim, icon, badge = "#66BB6A", "", "✅", "COMPLETED"
+    elif status == "skipped":
+        color, anim, icon, badge = "#FFA726", "", "⏭", "SKIPPED"
+    else:
+        color = "#42A5F5"
+        anim  = "animation:agent-pulse 1.5s ease-in-out infinite;"
+        icon  = "⚙️"
+        badge = "RUNNING"
+
+    placeholder.markdown(
+        f"""<style>
+        @keyframes agent-pulse {{
+            0%   {{ box-shadow: 0 0 0 0   {color}55; }}
+            70%  {{ box-shadow: 0 0 0 12px {color}00; }}
+            100% {{ box-shadow: 0 0 0 0   {color}00; }}
+        }}
+        </style>
+        <div style="background:#0d1a2e;border:2px solid {color};border-radius:14px;
+                    padding:18px 22px;margin:8px 0;{anim}">
+            <div style="display:flex;align-items:center;gap:12px">
+                <div style="font-size:32px;line-height:1">{icon}</div>
+                <div style="flex:1">
+                    <div style="color:{color};font-size:10px;font-weight:700;
+                                letter-spacing:1.5px;text-transform:uppercase">{badge}</div>
+                    <div style="color:#fff;font-size:20px;font-weight:700;margin-top:2px">{name}</div>
+                </div>
+                <div style="text-align:right">
+                    <div style="color:#555;font-size:10px;font-weight:600;letter-spacing:1px">STEP</div>
+                    <div style="color:{color};font-size:18px;font-weight:700">{step} / {total}</div>
+                </div>
+            </div>
+            <div style="color:#bbb;font-size:13px;margin-top:12px;padding:9px 14px;
+                        background:#ffffff08;border-radius:8px;border-left:3px solid {color}55">
+                {action}
+            </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_feed(placeholder, events: list):
+    """Render the scrolling activity feed into an st.empty()."""
+    if not events:
+        placeholder.empty()
+        return
+
+    recent = events[-8:]
+    rows = []
+    for ev in reversed(recent):
+        icon, bg = _EVENT_META.get(ev["event"], ("ℹ️", "#111"))
+        rows.append(
+            f'<div style="background:{bg};border-radius:8px;padding:7px 12px;'
+            f'display:flex;align-items:flex-start;gap:8px;margin-bottom:4px">'
+            f'<span style="font-size:14px;flex-shrink:0;margin-top:1px">{icon}</span>'
+            f'<span style="color:#ddd;font-size:12px;line-height:1.6">{ev["desc"]}</span>'
+            f'</div>'
+        )
+
+    placeholder.markdown(
+        '<div style="background:#0a0f1a;border-radius:12px;padding:12px 14px;margin:8px 0">'
+        '<div style="color:#555;font-size:10px;font-weight:700;letter-spacing:1.5px;'
+        'margin-bottom:8px">ACTIVITY FEED</div>'
+        + "".join(rows)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _make_live_callback(collected_logs: list, current_state: dict,
+                        status_ph, feed_ph):
+    """
+    Returns a log_callback that updates the two Streamlit placeholders
+    in real-time as the workflow engine emits events.
+    """
+    live_events: list = []
+
+    def callback(entry: dict):
+        # Always collect the log first — this must never fail
+        collected_logs.append(entry)
+
+        # Guard all Streamlit rendering so that any display error can never
+        # propagate into the runner and appear as an "agent failed" crash.
+        try:
+            event = entry.get("event", "")
+
+            # ── Update current-agent state ────────────────────────────────────
+            if event == "agent_sequence":
+                current_state.update(
+                    name=entry.get("agent", ""),
+                    step=entry.get("step", 0),
+                    total=entry.get("total", 0),
+                    status="running",
+                    action="Preparing…",
+                )
+            elif event == "llm_start":
+                current_state["action"] = "Thinking…"
+            elif event == "tool_call":
+                raw   = entry.get("tool", "")
+                label = _TOOL_LABELS.get(raw, raw.replace("_", " ").title())
+                current_state["action"] = f"{label}…"
+            elif event == "tool_response":
+                current_state["action"] = "Processing tool response…"
+            elif event == "llm_complete":
+                current_state["action"] = "Finalising output…"
+            elif event == "outputs_produced":
+                current_state["action"] = "Writing output…"
+            elif event == "agent_complete":
+                dur = entry.get("duration_ms")
+                current_state["status"] = "done"
+                current_state["action"] = "Completed" + (f" in {dur:,} ms" if dur else "")
+            elif event == "agent_skipped":
+                current_state["status"] = "skipped"
+                current_state["action"] = "Skipped — condition was false"
+            elif event in ("parallel_group_start", "parallel_group_done"):
+                agents_str = ", ".join(entry.get("agents", []))
+                current_state["action"] = (
+                    f"⚡ Running in parallel: <b>{agents_str}</b>"
+                    if "start" in event
+                    else f"⚡ Parallel group finished: <b>{agents_str}</b>"
+                )
+            elif event == "workflow_complete":
+                current_state.update(name="", status="complete", action="")
+
+            # ── Render agent card (main thread only) ──────────────────────────
+            import threading
+            if threading.current_thread() is threading.main_thread():
+                _render_agent_card(status_ph, current_state)
+
+                # ── Append to feed and render ──────────────────────────────────
+                desc = _action_label(entry)
+                if desc and event in _EVENT_META:
+                    live_events.append({"icon": _EVENT_META[event][0], "desc": desc, "event": event})
+                _render_feed(feed_ph, live_events)
+
+        except Exception:
+            # Never let a display error kill the workflow execution
+            pass
+
+    return callback
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # STATE: IDLE — show initial input form
 # ─────────────────────────────────────────────────────────────────────────────
 if st.session_state.wf_status == "idle":
@@ -326,26 +562,40 @@ if st.session_state.wf_status == "idle":
             st.error(f"Missing required inputs: {', '.join(missing)}")
         else:
             st.session_state.initial_inputs = initial_inputs
-            collected_logs: list = []
-            steps: list         = []
-            wf_header: dict     = {}
 
-            def on_log_start(entry):
-                collected_logs.append(entry)
+            # ── Live execution display ────────────────────────────────────────
+            st.markdown(
+                '<div style="color:#42A5F5;font-size:12px;font-weight:700;'
+                'letter-spacing:1.5px;margin-bottom:4px">⚡ LIVE EXECUTION</div>',
+                unsafe_allow_html=True,
+            )
+            status_ph: "st.delta_generator.DeltaGenerator" = st.empty()
+            feed_ph:   "st.delta_generator.DeltaGenerator" = st.empty()
 
-            with st.spinner("Running workflow…"):
-                try:
-                    result = start_workflow(
-                        agent_defs=agent_defs,
-                        initial_inputs=initial_inputs,
-                        workflow_id=selected_wf_id,
-                        parallel_groups=par_groups,
-                        log_callback=on_log_start,
-                        user_id=user_id,
-                    )
-                except Exception as e:
-                    st.error(f"❌ Error: {e}")
-                    st.stop()
+            collected_logs: list  = []
+            current_state:  dict  = {}
+            on_log_start = _make_live_callback(
+                collected_logs, current_state, status_ph, feed_ph
+            )
+
+            try:
+                result = start_workflow(
+                    agent_defs=agent_defs,
+                    initial_inputs=initial_inputs,
+                    workflow_id=selected_wf_id,
+                    parallel_groups=par_groups,
+                    log_callback=on_log_start,
+                    user_id=user_id,
+                )
+            except Exception as e:
+                status_ph.empty()
+                feed_ph.empty()
+                st.error(f"❌ Error: {e}")
+                st.stop()
+
+            # Clear live placeholders — results rendered below after rerun
+            status_ph.empty()
+            feed_ph.empty()
 
             st.session_state.all_logs    = collected_logs
             st.session_state.execution_id = result["execution_id"]
@@ -413,21 +663,35 @@ elif st.session_state.wf_status == "paused":
             "role": "user", "content": user_reply.strip()
         })
 
+        # ── Live execution display ────────────────────────────────────────────
+        st.markdown(
+            '<div style="color:#42A5F5;font-size:12px;font-weight:700;'
+            'letter-spacing:1.5px;margin-bottom:4px">⚡ LIVE EXECUTION</div>',
+            unsafe_allow_html=True,
+        )
+        status_ph: "st.delta_generator.DeltaGenerator" = st.empty()
+        feed_ph:   "st.delta_generator.DeltaGenerator" = st.empty()
+
         collected_logs: list = []
+        current_state:  dict = {}
+        on_log_resume = _make_live_callback(
+            collected_logs, current_state, status_ph, feed_ph
+        )
 
-        def on_log_resume(entry):
-            collected_logs.append(entry)
+        try:
+            result = resume_workflow(
+                execution_id=st.session_state.execution_id,
+                user_input=user_reply.strip(),
+                log_callback=on_log_resume,
+            )
+        except Exception as e:
+            status_ph.empty()
+            feed_ph.empty()
+            st.error(f"❌ Resume failed: {e}")
+            st.stop()
 
-        with st.spinner("Continuing workflow…"):
-            try:
-                result = resume_workflow(
-                    execution_id=st.session_state.execution_id,
-                    user_input=user_reply.strip(),
-                    log_callback=on_log_resume,
-                )
-            except Exception as e:
-                st.error(f"❌ Resume failed: {e}")
-                st.stop()
+        status_ph.empty()
+        feed_ph.empty()
 
         # Extend the accumulated logs (runner prepends old ones, so use new logs directly)
         st.session_state.all_logs = result.get("logs", collected_logs)
