@@ -6,12 +6,16 @@ All functions accept an optional `user_id` parameter.
 """
 
 from typing import Optional
-from app.repositories.repositories import AgentRepository, WorkflowRepository, ExecutionRepository, ToolRepository
+from app.repositories.repositories import (
+    AgentRepository, WorkflowRepository, ExecutionRepository,
+    ToolRepository, CustomRouterRepository,
+)
 
 _agents     = AgentRepository()
 _workflows  = WorkflowRepository()
 _executions = ExecutionRepository()
 _tools      = ToolRepository()
+_routers    = CustomRouterRepository()
 
 _ANON = "__anonymous__"
 
@@ -91,3 +95,29 @@ def list_tools() -> list:
 def get_tool_meta(name: str) -> Optional[dict]:
     """Return metadata for a single tool by name."""
     return _tools.get(name)
+
+
+# ─── CUSTOM ROUTERS ──────────────────────────────────────────────────────────
+
+def save_custom_router(router: dict, user_id: str = _ANON) -> dict:
+    return _routers.save(router, user_id)
+
+
+def list_custom_routers(user_id: str = _ANON) -> list:
+    return _routers.list_by_user(user_id)
+
+
+def get_custom_router(router_id: str, user_id: str = _ANON) -> Optional[dict]:
+    return _routers.get(router_id, user_id)
+
+
+def update_custom_router(router_id: str, updates: dict, user_id: str = _ANON) -> Optional[dict]:
+    return _routers.update(router_id, user_id, updates)
+
+
+def delete_custom_router(router_id: str, user_id: str = _ANON) -> bool:
+    return _routers.delete(router_id, user_id)
+
+
+def router_name_exists(user_id: str, name: str, exclude_id: Optional[str] = None) -> bool:
+    return _routers.name_exists(user_id, name, exclude_id)
