@@ -1,123 +1,23 @@
 """
-app/core/storage.py
---------------------
-Thin façade over MongoDB repositories.
-All functions accept an optional `user_id` parameter.
+app/core/storage.py — SHIM
+-----------------------------
+Backward-compatibility shim. All real logic lives in app/utils/common/storage.py.
+Re-exports every function so existing UI pages and API code continue to work.
 """
 
-from typing import Optional
-from app.repositories.repositories import (
-    AgentRepository, WorkflowRepository, ExecutionRepository,
-    ToolRepository, CustomRouterRepository,
+# Re-export the full public API from the new canonical location.
+from app.utils.common.storage import (  # noqa: F401
+    save_agent, list_agents, get_agent, delete_agent,
+    save_workflow, list_workflows, get_workflow, delete_workflow, update_workflow,
+    save_execution, get_execution, update_execution, list_executions,
+    seed_tools, list_tools, get_tool_meta,
+    save_custom_router, list_custom_routers, get_custom_router,
+    update_custom_router, delete_custom_router, router_name_exists,
 )
 
-_agents     = AgentRepository()
-_workflows  = WorkflowRepository()
-_executions = ExecutionRepository()
-_tools      = ToolRepository()
-_routers    = CustomRouterRepository()
-
-_ANON = "__anonymous__"
-
-
-# ─── AGENTS ──────────────────────────────────────────────────────────────────
-
-def save_agent(agent: dict, user_id: str = _ANON) -> dict:
-    return _agents.save(agent, user_id)
-
-
-def list_agents(user_id: str = _ANON) -> list:
-    return _agents.list_by_user(user_id)
-
-
-def get_agent(agent_id: str, user_id: Optional[str] = None) -> dict | None:
-    if user_id:
-        return _agents.get(agent_id, user_id)
-    return _agents.get_any(agent_id)
-
-
-def delete_agent(agent_id: str, user_id: str = _ANON):
-    _agents.delete(agent_id, user_id)
-
-
-# ─── WORKFLOWS ───────────────────────────────────────────────────────────────
-
-def save_workflow(workflow: dict, user_id: str = _ANON) -> dict:
-    return _workflows.save(workflow, user_id)
-
-
-def list_workflows(user_id: str = _ANON) -> list:
-    return _workflows.list_by_user(user_id)
-
-
-def get_workflow(workflow_id: str, user_id: Optional[str] = None) -> dict | None:
-    return _workflows.get(workflow_id, user_id)
-
-
-def delete_workflow(workflow_id: str, user_id: str = _ANON):
-    _workflows.delete(workflow_id, user_id)
-
-
-def update_workflow(workflow_id: str, updates: dict, user_id: str = _ANON) -> dict | None:
-    return _workflows.update(workflow_id, user_id, updates)
-
-
-# ─── EXECUTIONS ──────────────────────────────────────────────────────────────
-
-def save_execution(execution: dict) -> dict:
-    return _executions.save(execution)
-
-
-def get_execution(execution_id: str) -> dict | None:
-    return _executions.get(execution_id)
-
-
-def update_execution(execution_id: str, updates: dict) -> dict | None:
-    return _executions.update(execution_id, updates)
-
-
-def list_executions(user_id: str = _ANON) -> list:
-    return _executions.list_by_user(user_id)
-
-
-# ─── TOOLS ───────────────────────────────────────────────────────────────────
-
-def seed_tools(tools: list) -> None:
-    """Upsert all tool metadata into the 'tools' collection."""
-    _tools.seed(tools)
-
-
-def list_tools() -> list:
-    """Return all tool metadata from MongoDB, sorted by category."""
-    return _tools.list_all()
-
-
-def get_tool_meta(name: str) -> Optional[dict]:
-    """Return metadata for a single tool by name."""
-    return _tools.get(name)
-
-
-# ─── CUSTOM ROUTERS ──────────────────────────────────────────────────────────
-
-def save_custom_router(router: dict, user_id: str = _ANON) -> dict:
-    return _routers.save(router, user_id)
-
-
-def list_custom_routers(user_id: str = _ANON) -> list:
-    return _routers.list_by_user(user_id)
-
-
-def get_custom_router(router_id: str, user_id: str = _ANON) -> Optional[dict]:
-    return _routers.get(router_id, user_id)
-
-
-def update_custom_router(router_id: str, updates: dict, user_id: str = _ANON) -> Optional[dict]:
-    return _routers.update(router_id, user_id, updates)
-
-
-def delete_custom_router(router_id: str, user_id: str = _ANON) -> bool:
-    return _routers.delete(router_id, user_id)
-
-
-def router_name_exists(user_id: str, name: str, exclude_id: Optional[str] = None) -> bool:
-    return _routers.name_exists(user_id, name, exclude_id)
+# Also re-export repo classes for any code that imports them directly from here.
+from app.repositories.mongodb.agent_repo import AgentRepository  # noqa: F401
+from app.repositories.mongodb.workflow_repo import WorkflowRepository  # noqa: F401
+from app.repositories.mongodb.execution_repo import ExecutionRepository  # noqa: F401
+from app.repositories.mongodb.tool_repo import ToolRepository  # noqa: F401
+from app.repositories.mongodb.custom_router_repo import CustomRouterRepository  # noqa: F401
