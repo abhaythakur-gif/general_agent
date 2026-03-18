@@ -38,6 +38,7 @@ for _k, _v in {
     "sr_all_logs":       [],
     "sr_final_state":    {},
     "sr_initial_inputs": {},
+    "sr_nl_summary":     None,    # cached natural-language output summary
     "sr_session_id":      None,   # active MongoDB session id
     "sr_tenant_id":       "",     # human label for the active session
     "sr_pending_field":   None,   # name of the single field currently being asked
@@ -581,27 +582,34 @@ def _render_chat():
                 st.markdown(content)
 
 
-# ── Output summary builder ────────────────────────────────────────────────────
+# ── Output summary builders ──────────────────────────────────────────────────
 
-def _build_output_message(final_state: dict,
-                          initial_inputs: dict,
-                          agent_defs: list) -> str:
-    # Build the set of keys that agents formally declared as outputs
+_INTERNAL_KEYS = {
+    "collection_status", "follow_up_question", "missing_fields",
+    "partial_data", "user_message",
+}
+_ERROR_KEYWORDS = (
+    "error", "exception", "failed", "failure", "unauthorized",
+    "forbidden", "not found", "timeout", "connection",
+    "invalid", "expired", "missing",
+)
+
+
+def _build_output_message_legacy(final_state: dict,
+                                  initial_inputs: dict,
+                                  agent_defs: list) -> str:
+    """Fallback raw field-dump — used when the NL summary LLM call fails."""
+    import json as _json
     all_schemas: dict = {}
     for ad in agent_defs:
         for f in ad.output_schema:
             all_schemas[f.name] = f
-
-    # Show only declared output fields that are present in the final state.
-    # This is fully schema-driven — no hardcoded key names.
     output_vars = {
         k: v for k, v in final_state.items()
         if k in all_schemas
     }
-
     if not output_vars:
         return "✅ Workflow completed — no output variables were produced."
-
     lines = ["✅ **Workflow completed. Here are the results:**\n"]
     for key, value in output_vars.items():
         schema_field = all_schemas.get(key)
@@ -609,13 +617,114 @@ def _build_output_message(final_state: dict,
         header = f"**{key}**" + (f" — *{field_desc}*" if field_desc else "")
         lines.append(header)
         if isinstance(value, (dict, list)):
-            import json as _json
             lines.append(f"```json\n{_json.dumps(value, indent=2, default=str)}\n```")
         else:
             lines.append(str(value))
         lines.append("")
-
     return "\n".join(lines)
+
+
+def _build_nl_output(
+    final_state: dict,
+    initial_inputs: dict,
+    agent_defs: list,
+    original_query: str,
+    workflow_name: str,
+    llm_model: str,
+) -> str:
+    """
+    Generate a single conversational reply from workflow outputs using the LLM.
+    Falls back to the legacy field-dump if the LLM call fails.
+    """
+    import json as _json
+
+    # ── Step 1: collect declared output fields, strip internal control keys ──
+    all_schemas: dict = {}
+    for ad in agent_defs:
+        for f in ad.output_schema:
+            all_schemas[f.name] = f
+
+    output_vars = {
+        k: v for k, v in final_state.items()
+        if k in all_schemas and k not in _INTERNAL_KEYS
+    }
+
+    # ── Step 2: early exit for empty outputs ─────────────────────────────────
+    if not output_vars:
+        return "✅ Workflow completed — no output variables were produced."
+
+    # ── Step 3: build context block, cap each value at 2000 chars ────────────
+    context_lines = []
+    has_errors    = False
+    for key, value in output_vars.items():
+        schema_field = all_schemas.get(key)
+        meaning = (
+            schema_field.description
+            if (schema_field and schema_field.description)
+            else key
+        )
+        raw_str = (
+            _json.dumps(value, ensure_ascii=False, default=str)
+            if isinstance(value, (dict, list))
+            else str(value)
+        )
+        if any(kw in raw_str.lower() for kw in _ERROR_KEYWORDS):
+            has_errors = True
+        capped = raw_str[:2000] + ("…" if len(raw_str) > 2000 else "")
+        context_lines.append(
+            f"Field: {key}\n  Meaning: {meaning}\n  Value: {capped}"
+        )
+    context_block = "\n\n".join(context_lines)
+
+    # ── Step 4: agent pipeline summary ───────────────────────────────────────
+    agent_names = [ad.name for ad in agent_defs]
+    pipeline = (
+        f"1 agent: {agent_names[0]}"
+        if len(agent_names) == 1
+        else f"{len(agent_names)} agents: {' → '.join(agent_names)}"
+    )
+
+    # ── Step 5: conditional error instruction ────────────────────────────────
+    error_instruction = (
+        "\nNote: one or more output values appear to contain an error. "
+        "Explain what went wrong in plain English and suggest a practical fix."
+    ) if has_errors else ""
+
+    # ── Step 6: length hint ───────────────────────────────────────────────────
+    length_hint = (
+        "Keep the reply to 2–4 sentences."
+        if len(output_vars) == 1
+        else "Use a brief section for each distinct topic (3–4 lines per section max)."
+    )
+
+    prompt = (
+        "You are a helpful AI assistant presenting workflow results to a user "
+        "in a chat interface.\n\n"
+        f'The user asked: "{original_query}"\n'
+        f"The workflow that ran: '{workflow_name}' ran {pipeline}.\n\n"
+        "Here are the raw outputs produced:\n\n"
+        f"{context_block}\n"
+        f"{error_instruction}\n\n"
+        "Your task:\n"
+        "- Write a single, clear, conversational reply that directly answers "
+        "the user's question.\n"
+        "- Use natural prose. Bullet points or short headers are fine if they "
+        "aid clarity.\n"
+        "- Do NOT reproduce raw JSON, Python dict literals, or internal variable "
+        "names (like 'weather_data' or 'final_response').\n"
+        "- If a value contains an error message, explain what went wrong in plain "
+        "English and suggest a fix if one is obvious.\n"
+        "- Do not start with 'Based on the workflow outputs…' or similar filler "
+        "phrases.\n"
+        f"- {length_hint}\n\n"
+        "Reply:"
+    )
+
+    try:
+        llm = get_llm(llm_model)
+        return llm.invoke(prompt).content.strip()
+    except Exception:
+        return _build_output_message_legacy(final_state, initial_inputs, agent_defs)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -874,7 +983,15 @@ elif st.session_state.sr_phase == "running":
 
     if result["status"] == "completed":
         st.session_state.sr_final_state = result["state"]
-        output_msg = _build_output_message(result["state"], initial_inputs, agent_defs)
+        output_msg = _build_nl_output(
+            final_state    = result["state"],
+            initial_inputs = initial_inputs,
+            agent_defs     = agent_defs,
+            original_query = st.session_state.sr_original_query,
+            workflow_name  = st.session_state.sr_wf_name,
+            llm_model      = _SR_LLM_MODEL,
+        )
+        st.session_state.sr_nl_summary = output_msg
         _add_chat_msg("output", output_msg)
         st.session_state.sr_phase = "completed"
 
@@ -931,9 +1048,15 @@ elif st.session_state.sr_phase == "paused":
 
         if result["status"] == "completed":
             st.session_state.sr_final_state = result["state"]
-            output_msg = _build_output_message(
-                result["state"], st.session_state.sr_initial_inputs, agent_defs
+            output_msg = _build_nl_output(
+                final_state    = result["state"],
+                initial_inputs = st.session_state.sr_initial_inputs,
+                agent_defs     = agent_defs,
+                original_query = st.session_state.sr_original_query,
+                workflow_name  = st.session_state.sr_wf_name,
+                llm_model      = _SR_LLM_MODEL,
             )
+            st.session_state.sr_nl_summary = output_msg
             _add_chat_msg("output", output_msg)
             st.session_state.sr_phase = "completed"
 
@@ -1041,6 +1164,7 @@ elif st.session_state.sr_phase == "completed":
         st.session_state.sr_all_logs       = []
         st.session_state.sr_final_state    = {}
         st.session_state.sr_initial_inputs = {}
+        st.session_state.sr_nl_summary     = None
 
         _add_chat_msg("system", "---\n*Starting a new query…*")
         _add_chat_msg("user", new_query)
