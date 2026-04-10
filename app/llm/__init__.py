@@ -1,1 +1,1 @@
-# llm — LangChain LLM provider
+"""app/services/llm — LLM provider abstraction."""

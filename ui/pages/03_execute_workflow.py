@@ -4,9 +4,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import streamlit as st
 import json
 import time as _time
-from app.core.storage import list_agents, list_workflows, get_workflow
-from app.engine.workflow.runner import start_workflow, resume_workflow
-from app.schemas.agent import AgentDefinition
+from app.utils.common.storage import list_agents, list_workflows, get_workflow
+from app.agents.workflow_runner.agent import start_workflow, resume_workflow
+from app.models.domain.agent import AgentDefinition
 
 st.set_page_config(page_title="Execute Workflow", page_icon="▶️", layout="wide")
 

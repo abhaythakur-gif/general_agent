@@ -3,11 +3,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
 import time as _time  # noqa: F401  (kept for compatibility)
-from app.core.storage import list_workflows, list_agents
-from app.engine.workflow.runner import start_workflow, resume_workflow
-from app.schemas.agent import AgentDefinition
+from app.utils.common.storage import list_workflows, list_agents
+from app.agents.workflow_runner.agent import start_workflow, resume_workflow
+from app.models.domain.agent import AgentDefinition
 from app.llm.provider import get_llm
-from app.repositories.repositories import ChatRepository
+from app.repositories.mongodb.chat_repo import ChatRepository
 
 # ── Configurable defaults ─────────────────────────────────────────────────────
 # Override via the SMART_ROUTER_LLM env variable; falls back to "gpt-4".

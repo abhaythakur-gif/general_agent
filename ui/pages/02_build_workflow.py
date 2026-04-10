@@ -2,9 +2,9 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
-from app.core.storage import list_agents, save_workflow, update_workflow, list_workflows, delete_workflow
-from app.engine.workflow.validator import validate_workflow
-from app.schemas.agent import AgentDefinition
+from app.utils.common.storage import list_agents, save_workflow, update_workflow, list_workflows, delete_workflow
+from app.agents.workflow_runner.validator import validate_workflow
+from app.models.domain.agent import AgentDefinition
 
 st.set_page_config(page_title="Build Workflow", page_icon="🔗", layout="wide")
 

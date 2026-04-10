@@ -2,7 +2,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
-from app.core.storage import save_agent, list_agents, delete_agent
+from app.utils.common.storage import save_agent, list_agents, delete_agent
 from app.tools.registry import list_tools
 from app.llm.provider import list_models
 

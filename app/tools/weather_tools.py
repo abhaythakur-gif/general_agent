@@ -1,5 +1,5 @@
-from app.core.config import settings
-from app.core.logger import get_logger
+from app.config.settings import settings
+from app.config.logging import get_logger
 import requests
 
 logger = get_logger(__name__)

@@ -13,7 +13,12 @@ def get_current_user_id(x_user_id: str = Header(..., description="Your unique us
     uid = x_user_id.strip()
     if not uid:
         raise HTTPException(status_code=400, detail="X-User-ID header must not be empty")
-    get_or_create_user(uid)
+    db = get_mongo_db()
+    if not db["users"].find_one({"_id": uid}):
+        raise HTTPException(
+            status_code=404,
+            detail=f"User ID '{uid}' does not exist. Please register first via POST /api/v1/auth/init.",
+        )
     return uid
 
 

@@ -3,15 +3,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
 import time as _time
-from app.core.storage import (
+from app.utils.common.storage import (
     list_workflows, list_agents, get_workflow,
     save_custom_router, list_custom_routers, get_custom_router,
     update_custom_router, delete_custom_router, router_name_exists,
 )
-from app.engine.workflow.runner import start_workflow, resume_workflow
-from app.schemas.agent import AgentDefinition
+from app.agents.workflow_runner.agent import start_workflow, resume_workflow
+from app.models.domain.agent import AgentDefinition
 from app.llm.provider import get_llm
-from app.repositories.repositories import ChatRepository
+from app.repositories.mongodb.chat_repo import ChatRepository
 
 _CR_LLM_MODEL: str = os.getenv("SMART_ROUTER_LLM", "gpt-4")
 

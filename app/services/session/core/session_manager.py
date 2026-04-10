@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import HTTPException
 
 from app.repositories.mongodb.chat_repo import ChatRepository
-from app.services.llm.providers.openai import get_llm
+from app.llm.providers.openai import get_llm
 from app.controllers.schema.request_schema.chat import (
     ChatSessionCreate,
     ChatSessionOut,

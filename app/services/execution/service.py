@@ -14,7 +14,7 @@ from app.repositories.mongodb.workflow_repo import WorkflowRepository
 from app.repositories.mongodb.agent_repo import AgentRepository
 from app.repositories.mongodb.execution_repo import ExecutionRepository
 from app.models.domain.agent import AgentDefinition, FieldSchema
-from app.agentic.agents.workflow_runner.agent import start_workflow, resume_workflow
+from app.agents.workflow_runner.agent import start_workflow, resume_workflow
 
 _wf_repo    = WorkflowRepository()
 _agent_repo = AgentRepository()
@@ -138,3 +138,4 @@ def get_execution_logs(execution_id: str) -> dict:
 
 def list_executions(user_id: str) -> list:
     return _exec_repo.list_by_user(user_id)
+
